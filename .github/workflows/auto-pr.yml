@@ -1,0 +1,47 @@
+name: Auto Create PR to Dev
+
+on:
+  push:
+    branches:
+      - "feature/**"
+
+jobs:
+  create-pr:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout (required by action)
+        uses: actions/checkout@v4
+
+      - name: Create Pull Request (feature → dev)
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+          # 👇 TARGET BRANCH
+          base: dev
+
+          # 👇 SOURCE BRANCH (current pushed branch)
+          branch: ${{ github.ref_name }}
+
+          title: "Auto PR: ${{ github.ref_name }} → dev"
+
+          body: |
+            🔁 **Auto-generated Pull Request**
+
+            This PR was created automatically after a push.
+
+            **Source branch:** `${{ github.ref_name }}`
+            **Target branch:** `dev`
+
+            ✅ CI validation will run automatically.
+            🚫 Please do not merge if CI is failing.
+
+          draft: false
+
+          # 👇 IMPORTANT: duplicate PRs se bachne ke liye
+          delete-branch: false
