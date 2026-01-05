@@ -1,0 +1,143 @@
+pipeline {
+  agent { label "agent-1"}
+
+  environment {
+    // ===== APP =====
+    APP_NAME  = "starbucks-react"
+    IMAGE_TAG = "${BUILD_NUMBER}"
+
+    // ===== NEXUS (Docker Hosted Repo) =====
+    NEXUS_REGISTRY = ""
+    NEXUS_REPO     = "devops"
+
+    // ===== SONARQUBE =====
+    SONAR_HOST_URL = ""
+    SONAR_TOKEN    = credentials('sonar-token')
+  }
+
+  stages {
+
+    stage('Checkout Code') {
+      steps {
+        git branch: 'main',
+            url: 'https://github.com/devopsghazali/starbucks-ci_cd_automation.git'
+      }
+    }
+
+    stage('Gitleaks – Secrets Scan') {
+      steps {
+        sh '''
+          gitleaks detect --source . --no-git --redact
+        '''
+      }
+    }
+
+//     stage('OWASP Dependency Check') {
+//       steps {
+//         sh '''
+//             dependency-check.sh \
+//   --scan . \
+//   --format HTML \
+//   --out owasp-report \
+//   --data $WORKSPACE/.dc-data
+//         '''
+//       }
+//     }
+ 
+
+
+    stage('Install Node Dependencies') {
+      steps {
+        sh 'npm install'
+      }
+    }
+
+    stage('ESLint – Code Structure') {
+      steps {
+        sh '''
+          npm run lint || true
+        '''
+      }
+    }
+
+    stage('SonarQube Analysis') {
+      steps {
+        sh '''
+          sonar-scanner \
+            -Dsonar.projectKey=starbucks-react \
+            -Dsonar.sources=src \
+            -Dsonar.host.url=$SONAR_HOST_URL \
+            -Dsonar.login=$SONAR_TOKEN
+        '''
+      }
+    }
+
+    stage('Build React App') {
+      steps {
+        sh 'CI=false npm run build'
+      }
+    }
+
+    stage('Docker Image Build') {
+      steps {
+        sh '''
+          docker build -t $APP_NAME:$IMAGE_TAG .
+        '''
+      }
+    }
+
+    // stage('Trivy Scan – Local Image') {
+    //   steps {
+    //     sh '''
+    //       trivy image \
+    //         --severity HIGH,CRITICAL \
+    //         $APP_NAME:$IMAGE_TAG
+    //     '''
+    //   }
+    // }
+
+    stage('Push Image to Nexus') {
+      steps {
+        withCredentials([usernamePassword(
+          credentialsId: 'nexus-cred',
+          usernameVariable: 'NEXUS_USER',
+          passwordVariable: 'NEXUS_PASS'
+        )]) {
+          sh '''
+            docker login $NEXUS_REGISTRY -u $NEXUS_USER -p $NEXUS_PASS
+
+            docker tag $APP_NAME:$IMAGE_TAG \
+              $NEXUS_REGISTRY/$NEXUS_REPO/$APP_NAME:$IMAGE_TAG
+
+            docker push \
+              $NEXUS_REGISTRY/$NEXUS_REPO/$APP_NAME:$IMAGE_TAG
+          '''
+        }
+      }
+    }
+
+    stage('Trivy Scan – Nexus Image') {
+      steps {
+        sh '''
+          trivy image \
+            --severity HIGH,CRITICAL \
+            $NEXUS_REGISTRY/$NEXUS_REPO/$APP_NAME:$IMAGE_TAG
+        '''
+      }
+    }
+  }
+
+  post {
+    always {
+      archiveArtifacts artifacts: 'owasp-report/**', allowEmptyArchive: true
+    }
+
+    success {
+      echo "✅ Pipeline SUCCESS – Secure image pushed to Nexus"
+    }
+
+    failure {
+      echo "❌ Pipeline FAILED – Check security / quality stage"
+    }
+  }
+}
